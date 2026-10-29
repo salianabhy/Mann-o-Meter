@@ -1,7 +1,18 @@
 (() => {
   "use strict";
 
-  const API_BASE = "https://mansik-santulan-score.onrender.com";
+  const LOCAL_API = "http://127.0.0.1:8000";
+  const REMOTE_FALLBACK = "https://mansik-santulan-score.onrender.com";
+
+  function getCandidateEndpoints() {
+    const list = [];
+    if (window.location.protocol.startsWith("http")) {
+      list.push(window.location.origin);
+    }
+    list.push(LOCAL_API);
+    list.push(REMOTE_FALLBACK);
+    return Array.from(new Set(list));
+  }
 
   const form = document.getElementById("predict-form");
   const submitBtn = document.getElementById("submit-btn");
@@ -244,12 +255,30 @@
     setSubmitting(true);
     showState("loading");
 
+    const candidates = getCandidateEndpoints();
+    let res = null;
+    let successfulEndpoint = null;
+    let lastNetworkErr = null;
+
+    for (const endpoint of candidates) {
+      try {
+        const candidateRes = await fetch(`${endpoint}/predict`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        res = candidateRes;
+        successfulEndpoint = endpoint;
+        break;
+      } catch (netErr) {
+        lastNetworkErr = netErr;
+      }
+    }
+
     try {
-      const res = await fetch(`${API_BASE}/predict`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      if (!res) {
+        throw lastNetworkErr || new Error("Failed to connect to any API server");
+      }
 
       if (res.status === 422) {
         const body = await res.json().catch(() => null);
@@ -281,7 +310,7 @@
     } catch (err) {
       renderError(
         "Can't reach the server",
-        `Couldn't connect to ${API_BASE}. Make sure the backend is running (uvicorn main:app --port 2200 --reload) and reachable from this page.`
+        `Couldn't connect to the backend server (${candidates.join(" or ")}). Make sure the local server is running with 'python main.py' or 'uvicorn main:app --reload'.`
       );
     } finally {
       setSubmitting(false);
