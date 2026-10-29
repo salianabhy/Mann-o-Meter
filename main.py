@@ -1,6 +1,7 @@
 import os
 import warnings
 import joblib
+import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -59,6 +60,23 @@ def greet():
     return {"message": "Welcome to Sheryians AI School Guys"}
 
 
+def calibrate_score(raw_pred: float) -> float:
+    """
+    Random Forest ensemble tree averaging naturally contracts continuous predictions
+    into ~[4.8, 8.0] around the training mean (6.2). This calibration maps the predictions
+    smoothly across the full 0–10 scale while strictly preserving all learned feature weights:
+      - Raw ~4.80 (severe strain)   -> ~1.5 - 2.5
+      - Raw ~6.10 (median/average)  -> ~5.5 - 6.2
+      - Raw ~7.95 (optimal habits)  -> ~8.8 - 9.8
+    """
+    raw = float(raw_pred)
+    if raw <= 6.10:
+        scaled = 1.5 + (raw - 4.80) * (4.5 / 1.30)
+    else:
+        scaled = 6.0 + (raw - 6.10) * (3.8 / 1.85)
+    return round(float(np.clip(scaled, 1.0, 9.9)), 2)
+
+
 @app.post('/predict', response_model=PredictionResponse)
 def predict(data: StudentData):
     country_group = data.country if data.country in top_countries else "Other"
@@ -79,8 +97,9 @@ def predict(data: StudentData):
         'Grouped_country'           : country_group
     }])
 
-    prediction = model.predict(input_row)[0]
-    return PredictionResponse(predicted_mental_health_score=round(float(prediction), 2))
+    raw_prediction = model.predict(input_row)[0]
+    final_score = calibrate_score(raw_prediction)
+    return PredictionResponse(predicted_mental_health_score=final_score)
 
 
 # Mount current directory to serve static assets (index.html, style.css, script.js)
